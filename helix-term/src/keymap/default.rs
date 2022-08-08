@@ -192,6 +192,8 @@ pub fn default() -> HashMap<Mode, Keymap> {
             },
         },
 
+        "'" => read_aloud,
+
         // move under <space>c
         "C-c" => toggle_comments,
 

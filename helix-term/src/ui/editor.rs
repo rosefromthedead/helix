@@ -920,6 +920,7 @@ impl EditorView {
             register: None,
             editor: cx.editor,
             jobs: cx.jobs,
+            tts: cx.tts,
             count: None,
             callback: None,
             on_next_key_callback: None,
@@ -1121,6 +1122,7 @@ impl Component for EditorView {
             editor: context.editor,
             count: None,
             register: None,
+            tts: context.tts,
             callback: None,
             on_next_key_callback: None,
             jobs: context.jobs,
@@ -1157,6 +1159,7 @@ impl Component for EditorView {
                                     editor: cx.editor,
                                     jobs: cx.jobs,
                                     scroll: None,
+                                    tts: cx.tts,
                                 };
                                 let res = completion.handle_event(event, &mut cx);
 

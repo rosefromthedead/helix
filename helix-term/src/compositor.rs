@@ -6,6 +6,7 @@ use helix_view::graphics::{CursorKind, Rect};
 
 use crossterm::event::Event;
 
+use tokio::sync::mpsc::Sender;
 #[cfg(feature = "integration")]
 use tui::backend::TestBackend;
 use tui::buffer::Buffer as Surface;
@@ -20,12 +21,13 @@ pub enum EventResult {
 
 use helix_view::Editor;
 
-use crate::job::Jobs;
+use crate::{job::Jobs, tts::Utterance};
 
 pub struct Context<'a> {
     pub editor: &'a mut Editor,
     pub scroll: Option<usize>,
     pub jobs: &'a mut Jobs,
+    pub tts: Option<&'a Sender<Utterance>>,
 }
 
 pub trait Component: Any + AnyComponent {

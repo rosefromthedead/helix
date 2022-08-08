@@ -4,6 +4,7 @@ pub(crate) mod typed;
 
 pub use dap::*;
 pub use lsp::*;
+use tokio::sync::mpsc::Sender;
 use tui::text::Spans;
 pub use typed::*;
 
@@ -46,7 +47,7 @@ use crate::{
     args,
     compositor::{self, Component, Compositor},
     keymap::ReverseKeymap,
-    ui::{self, overlay::overlayed, FilePicker, Picker, Popup, Prompt, PromptEvent},
+    ui::{self, overlay::overlayed, FilePicker, Picker, Popup, Prompt, PromptEvent}, tts::Utterance,
 };
 
 use crate::job::{self, Job, Jobs};
@@ -71,6 +72,7 @@ pub struct Context<'a> {
     pub register: Option<char>,
     pub count: Option<NonZeroUsize>,
     pub editor: &'a mut Editor,
+    pub tts: Option<&'a Sender<Utterance>>,
 
     pub callback: Option<crate::compositor::Callback>,
     pub on_next_key_callback: Option<Box<dyn FnOnce(&mut Context, KeyEvent)>>,
@@ -167,6 +169,7 @@ impl MappableCommand {
                         editor: cx.editor,
                         jobs: cx.jobs,
                         scroll: None,
+                        tts: cx.tts,
                     };
                     if let Err(e) = (command.fun)(&mut cx, &args[..], PromptEvent::Validate) {
                         cx.editor.set_error(format!("{}", e));
@@ -351,6 +354,7 @@ impl MappableCommand {
         remove_primary_selection, "Remove primary selection",
         completion, "Invoke completion popup",
         hover, "Show docs for item under cursor",
+        read_aloud, "Read token/tokens under cursor using TTS",
         toggle_comments, "Comment/uncomment selections",
         rotate_selections_forward, "Rotate selections forward",
         rotate_selections_backward, "Rotate selections backward",
@@ -2416,6 +2420,7 @@ pub fn command_palette(cx: &mut Context) {
                     register: None,
                     count: std::num::NonZeroUsize::new(1),
                     editor: cx.editor,
+                    tts: cx.tts,
                     callback: None,
                     on_next_key_callback: None,
                     jobs: cx.jobs,
@@ -3866,6 +3871,19 @@ pub fn completion(cx: &mut Context) {
             );
         },
     );
+}
+
+fn read_aloud(cx: &mut Context) {
+    if let Some(tts) = cx.tts {
+        let (view, doc) = current!(cx.editor);
+        let primary = doc.selection(view.id).primary();
+        let text = primary.slice(doc.text().slice(..)).to_string();
+        let tts = tts.clone();
+        cx.jobs.spawn(async move {
+            tts.send(Utterance(text)).await;
+            Ok(())
+        })
+    }
 }
 
 // comments

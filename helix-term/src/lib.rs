@@ -9,6 +9,7 @@ pub mod config;
 pub mod health;
 pub mod job;
 pub mod keymap;
+pub mod tts;
 pub mod ui;
 pub use keymap::macros::*;
 

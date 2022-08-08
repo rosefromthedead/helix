@@ -8,6 +8,7 @@ use helix_core::{
 use helix_lsp::{lsp, util::lsp_pos_to_pos, LspProgressMap};
 use helix_view::{align_view, editor::ConfigEvent, theme, tree::Layout, Align, Editor};
 use serde_json::json;
+use tokio::sync::mpsc::Sender;
 
 use crate::{
     args::Args,
@@ -16,7 +17,7 @@ use crate::{
     config::Config,
     job::Jobs,
     keymap::Keymaps,
-    ui::{self, overlay::overlayed},
+    ui::{self, overlay::overlayed}, tts::Utterance,
 };
 
 use log::{error, warn};
@@ -58,6 +59,8 @@ pub struct Application {
     jobs: Jobs,
     lsp_progress: LspProgressMap,
     last_render: Instant,
+
+    tts: Option<Sender<Utterance>>,
 }
 
 #[cfg(feature = "integration")]
@@ -208,6 +211,8 @@ impl Application {
         let signals =
             Signals::new(&[signal::SIGTSTP, signal::SIGCONT]).context("build signal handler")?;
 
+        let tts = crate::tts::init_tts();
+
         let app = Self {
             compositor,
             editor,
@@ -221,6 +226,8 @@ impl Application {
             jobs: Jobs::new(),
             lsp_progress: LspProgressMap::new(),
             last_render: Instant::now(),
+
+            tts,
         };
 
         Ok(app)
@@ -233,6 +240,7 @@ impl Application {
             editor: &mut self.editor,
             jobs: &mut self.jobs,
             scroll: None,
+            tts: self.tts.as_ref(),
         };
 
         compositor.render(&mut cx);
@@ -412,6 +420,7 @@ impl Application {
             editor: &mut self.editor,
             jobs: &mut self.jobs,
             scroll: None,
+            tts: self.tts.as_ref(),
         };
         if let EventResult::Consumed(_) = editor_view.handle_idle_timeout(&mut cx) {
             self.render();
@@ -423,6 +432,7 @@ impl Application {
             editor: &mut self.editor,
             jobs: &mut self.jobs,
             scroll: None,
+            tts: self.tts.as_ref(),
         };
         // Handle key events
         let should_redraw = match event {
