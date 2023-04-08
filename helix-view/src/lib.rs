@@ -16,7 +16,6 @@ pub mod info;
 pub mod input;
 pub mod keyboard;
 pub mod theme;
-pub mod tree;
 pub mod view;
 
 use std::num::NonZeroUsize;
@@ -38,8 +37,14 @@ impl std::fmt::Display for DocumentId {
     }
 }
 
-slotmap::new_key_type! {
-    pub struct ViewId;
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct ViewId(NonZeroUsize);
+
+impl Default for ViewId {
+    fn default() -> ViewId {
+        // Safety: 1 is non-zero
+        ViewId(unsafe { NonZeroUsize::new_unchecked(1) })
+    }
 }
 
 pub enum Align {
