@@ -1,7 +1,7 @@
 use crate::{
     align_view,
     clipboard::{get_clipboard_provider, ClipboardProvider},
-    document::{DocumentSavedEventFuture, DocumentSavedEventResult, Mode},
+    document::{DamageTracker, DocumentSavedEventFuture, DocumentSavedEventResult, Mode},
     graphics::{CursorKind, Rect},
     info::Info,
     input::KeyEvent,
@@ -875,6 +875,8 @@ pub struct Editor {
     /// field is set and any old requests are automatically
     /// canceled as a result
     pub completion_request_handle: Option<oneshot::Sender<()>>,
+
+    create_damage_tracker: fn() -> Option<Box<dyn DamageTracker>>,
 }
 
 pub type RedrawHandle = (Arc<Notify>, Arc<RwLock<()>>);
@@ -929,6 +931,7 @@ impl Editor {
         theme_loader: Arc<theme::Loader>,
         syn_loader: Arc<syntax::Loader>,
         config: Arc<dyn DynAccess<Config>>,
+        create_damage_tracker: fn() -> Option<Box<dyn DamageTracker>>,
     ) -> Self {
         let conf = config.load();
         let auto_pairs = (&conf.auto_pairs).into();
@@ -974,6 +977,7 @@ impl Editor {
             needs_redraw: false,
             cursor_cache: Cell::new(None),
             completion_request_handle: None,
+            create_damage_tracker,
         }
     }
 
@@ -1292,14 +1296,22 @@ impl Editor {
     }
 
     pub fn new_file(&mut self, action: Action) -> DocumentId {
-        self.new_file_from_document(action, Document::default(self.config.clone()))
+        self.new_file_from_document(
+            action,
+            Document::default(self.config.clone(), (self.create_damage_tracker)()),
+        )
     }
 
     pub fn new_file_from_stdin(&mut self, action: Action) -> Result<DocumentId, Error> {
         let (rope, encoding) = crate::document::from_reader(&mut stdin(), None)?;
         Ok(self.new_file_from_document(
             action,
-            Document::from(rope, Some(encoding), self.config.clone()),
+            Document::from(
+                rope,
+                Some(encoding),
+                self.config.clone(),
+                (self.create_damage_tracker)(),
+            ),
         ))
     }
 
@@ -1316,6 +1328,7 @@ impl Editor {
                 None,
                 Some(self.syn_loader.clone()),
                 self.config.clone(),
+                (self.create_damage_tracker)(),
             )?;
 
             if let Some(diff_base) = self.diff_providers.get_diff_base(&path) {
@@ -1406,7 +1419,12 @@ impl Editor {
                 .iter()
                 .map(|(&doc_id, _)| doc_id)
                 .next()
-                .unwrap_or_else(|| self.new_document(Document::default(self.config.clone())));
+                .unwrap_or_else(|| {
+                    self.new_document(Document::default(
+                        self.config.clone(),
+                        (self.create_damage_tracker)(),
+                    ))
+                });
             let view = View::new(doc_id, self.config().gutters.clone());
             let view_id = self.tree.insert(view);
             let doc = doc_mut!(self, &doc_id);

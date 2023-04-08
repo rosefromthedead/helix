@@ -115,6 +115,12 @@ pub struct SavePoint {
     revert: Mutex<Transaction>,
 }
 
+pub trait DamageTracker {
+    fn init(&mut self, text: &Rope);
+    fn apply_changes(&mut self, old_text: &Rope, new_text: &Rope, changes: &ChangeSet);
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+}
+
 pub struct Document {
     pub(crate) id: DocumentId,
     text: Rope,
@@ -169,6 +175,8 @@ pub struct Document {
 
     diff_handle: Option<DiffHandle>,
     version_control_head: Option<Arc<ArcSwap<Box<str>>>>,
+
+    pub damage_tracker: Option<Box<dyn DamageTracker>>,
 }
 
 /// Inlay hints for a single `(Document, View)` combo.
@@ -465,10 +473,14 @@ impl Document {
         text: Rope,
         encoding: Option<&'static encoding::Encoding>,
         config: Arc<dyn DynAccess<Config>>,
+        mut damage_tracker: Option<Box<dyn DamageTracker>>,
     ) -> Self {
         let encoding = encoding.unwrap_or(encoding::UTF_8);
         let changes = ChangeSet::new(&text);
         let old_state = None;
+        if let Some(ref mut t) = damage_tracker {
+            t.init(&text);
+        }
 
         Self {
             id: DocumentId::default(),
@@ -496,11 +508,15 @@ impl Document {
             diff_handle: None,
             config,
             version_control_head: None,
+            damage_tracker,
         }
     }
-    pub fn default(config: Arc<dyn DynAccess<Config>>) -> Self {
+    pub fn default(
+        config: Arc<dyn DynAccess<Config>>,
+        damage_tracker: Option<Box<dyn DamageTracker>>,
+    ) -> Self {
         let text = Rope::from(DEFAULT_LINE_ENDING.as_str());
-        Self::from(text, None, config)
+        Self::from(text, None, config, damage_tracker)
     }
     // TODO: async fn?
     /// Create a new document from `path`. Encoding is auto-detected, but it can be manually
@@ -510,6 +526,7 @@ impl Document {
         encoding: Option<&'static encoding::Encoding>,
         config_loader: Option<Arc<syntax::Loader>>,
         config: Arc<dyn DynAccess<Config>>,
+        damage_tracker: Option<Box<dyn DamageTracker>>,
     ) -> Result<Self, Error> {
         // Open the file if it exists, otherwise assume it is a new file (and thus empty).
         let (rope, encoding) = if path.exists() {
@@ -521,7 +538,7 @@ impl Document {
             (Rope::from(DEFAULT_LINE_ENDING.as_str()), encoding)
         };
 
-        let mut doc = Self::from(rope, Some(encoding), config);
+        let mut doc = Self::from(rope, Some(encoding), config, damage_tracker);
 
         // set the path and try detecting the language
         doc.set_path(Some(path))?;
@@ -938,6 +955,10 @@ impl Document {
                     view_id,
                     selection.clone().ensure_invariants(self.text.slice(..)),
                 );
+            }
+
+            if let Some(ref mut tracker) = self.damage_tracker {
+                tracker.apply_changes(&old_doc, &self.text, transaction.changes());
             }
 
             self.modified_since_accessed = true;
@@ -1545,6 +1566,7 @@ mod test {
             text,
             None,
             Arc::new(ArcSwap::new(Arc::new(Config::default()))),
+            None,
         );
         let view = ViewId::default();
         doc.set_selection(view, Selection::single(0, 0));
@@ -1583,6 +1605,7 @@ mod test {
             text,
             None,
             Arc::new(ArcSwap::new(Arc::new(Config::default()))),
+            None,
         );
         let view = ViewId::default();
         doc.set_selection(view, Selection::single(5, 5));
@@ -1696,7 +1719,7 @@ mod test {
     #[test]
     fn test_line_ending() {
         assert_eq!(
-            Document::default(Arc::new(ArcSwap::new(Arc::new(Config::default()))))
+            Document::default(Arc::new(ArcSwap::new(Arc::new(Config::default()))), None)
                 .text()
                 .to_string(),
             DEFAULT_LINE_ENDING.as_str()
