@@ -12,7 +12,7 @@ pub use typed::*;
 use helix_core::{
     char_idx_at_visual_offset, comment,
     doc_formatter::TextFormat,
-    encoding, find_first_non_whitespace_char, find_workspace, graphemes,
+    find_first_non_whitespace_char, graphemes,
     history::UndoKind,
     increment, indent,
     indent::IndentStyle,
@@ -32,7 +32,7 @@ use helix_core::{
 };
 use helix_view::{
     clipboard::ClipboardType,
-    document::{FormatterError, Mode, SCRATCH_BUFFER_NAME},
+    document::{FormatterError, Mode},
     editor::{Action, Motion},
     info::Info,
     input::KeyEvent,
@@ -49,17 +49,15 @@ use movement::Movement;
 use crate::{
     args,
     compositor::{self, Component, Compositor},
-    filter_picker_entry,
     job::Callback,
     keymap::ReverseKeymap,
     ui::{
-        self, editor::InsertEvent, lsp::SignatureHelp, overlay::overlayed, FilePicker, Picker,
-        Popup, Prompt, PromptEvent,
+        self, editor::InsertEvent, lsp::SignatureHelp, overlay::overlayed, Popup, Prompt,
+        PromptEvent,
     },
 };
 
 use crate::job::{self, Jobs};
-use futures_util::StreamExt;
 use std::{collections::HashMap, fmt, future::Future};
 use std::{collections::HashSet, num::NonZeroUsize};
 
@@ -70,11 +68,6 @@ use std::{
 
 use once_cell::sync::Lazy;
 use serde::de::{self, Deserialize, Deserializer};
-
-use grep_regex::RegexMatcherBuilder;
-use grep_searcher::{sinks, BinaryDetection, SearcherBuilder};
-use ignore::{DirEntry, WalkBuilder, WalkState};
-use tokio_stream::wrappers::UnboundedReceiverStream;
 
 pub type OnKeyCallback = Box<dyn FnOnce(&mut Context, KeyEvent)>;
 
@@ -276,7 +269,6 @@ impl MappableCommand {
         extend_search_prev, "Add previous search match to selection",
         search_selection, "Use current selection as search pattern",
         make_search_word_bounded, "Modify current search to make it word bounded",
-        global_search, "Global search in workspace folder",
         extend_line, "Select current line, if already selected, extend to another line based on the anchor",
         extend_line_below, "Select current line, if already selected, extend to next line",
         extend_line_above, "Select current line, if already selected, extend to previous line",
@@ -292,18 +284,12 @@ impl MappableCommand {
         insert_mode, "Insert before selection",
         append_mode, "Append after selection",
         command_mode, "Enter command mode",
-        file_picker, "Open file picker",
-        file_picker_in_current_buffer_directory, "Open file picker at current buffers's directory",
-        file_picker_in_current_directory, "Open file picker at current working directory",
         code_action, "Perform code action",
-        buffer_picker, "Open buffer picker",
-        jumplist_picker, "Open jumplist picker",
         symbol_picker, "Open symbol picker",
         select_references_to_symbol_under_cursor, "Select symbol references",
         workspace_symbol_picker, "Open workspace symbol picker",
         diagnostics_picker, "Open diagnostic picker",
         workspace_diagnostics_picker, "Open workspace diagnostic picker",
-        last_picker, "Open last picker",
         insert_at_line_start, "Insert at start of line",
         insert_at_line_end, "Insert at end of line",
         open_below, "Open new line below selection",
@@ -380,12 +366,9 @@ impl MappableCommand {
         format_selections, "Format selection",
         join_selections, "Join lines inside selection",
         join_selections_space, "Join lines inside selection and select spaces",
-        keep_selections, "Keep selections matching regex",
-        remove_selections, "Remove selections matching regex",
         align_selections, "Align selections in column",
         keep_primary_selection, "Keep primary selection",
         remove_primary_selection, "Remove primary selection",
-        completion, "Invoke completion popup",
         hover, "Show docs for item under cursor",
         toggle_comments, "Comment/uncomment selections",
         rotate_selections_forward, "Rotate selections forward",
@@ -441,18 +424,12 @@ impl MappableCommand {
         dap_switch_stack_frame, "Switch stack frame",
         dap_enable_exceptions, "Enable exception breakpoints",
         dap_disable_exceptions, "Disable exception breakpoints",
-        shell_pipe, "Pipe selections through shell command",
-        shell_pipe_to, "Pipe selections into shell command ignoring output",
-        shell_insert_output, "Insert shell command output before selections",
-        shell_append_output, "Append shell command output after selections",
-        shell_keep_pipe, "Filter selections with shell predicate",
         suspend, "Suspend and return to shell",
         rename_symbol, "Rename symbol",
         increment, "Increment item under cursor",
         decrement, "Decrement item under cursor",
         record_macro, "Record macro",
         replay_macro, "Replay macro",
-        command_palette, "Open command palette",
     );
 }
 
@@ -1957,192 +1934,6 @@ fn make_search_word_bounded(cx: &mut Context) {
     cx.editor.set_status(msg);
 }
 
-fn global_search(cx: &mut Context) {
-    #[derive(Debug)]
-    struct FileResult {
-        path: PathBuf,
-        /// 0 indexed lines
-        line_num: usize,
-    }
-
-    impl FileResult {
-        fn new(path: &Path, line_num: usize) -> Self {
-            Self {
-                path: path.to_path_buf(),
-                line_num,
-            }
-        }
-    }
-
-    impl ui::menu::Item for FileResult {
-        type Data = Option<PathBuf>;
-
-        fn format(&self, current_path: &Self::Data) -> Row {
-            let relative_path = helix_core::path::get_relative_path(&self.path)
-                .to_string_lossy()
-                .into_owned();
-            if current_path
-                .as_ref()
-                .map(|p| p == &self.path)
-                .unwrap_or(false)
-            {
-                format!("{} (*)", relative_path).into()
-            } else {
-                relative_path.into()
-            }
-        }
-    }
-
-    let (all_matches_sx, all_matches_rx) = tokio::sync::mpsc::unbounded_channel::<FileResult>();
-    let config = cx.editor.config();
-    let smart_case = config.search.smart_case;
-    let file_picker_config = config.file_picker.clone();
-
-    let reg = cx.register.unwrap_or('/');
-
-    let completions = search_completions(cx, Some(reg));
-    ui::regex_prompt(
-        cx,
-        "global-search:".into(),
-        Some(reg),
-        move |_editor: &Editor, input: &str| {
-            completions
-                .iter()
-                .filter(|comp| comp.starts_with(input))
-                .map(|comp| (0.., std::borrow::Cow::Owned(comp.clone())))
-                .collect()
-        },
-        move |_editor, regex, event| {
-            if event != PromptEvent::Validate {
-                return;
-            }
-
-            if let Ok(matcher) = RegexMatcherBuilder::new()
-                .case_smart(smart_case)
-                .build(regex.as_str())
-            {
-                let searcher = SearcherBuilder::new()
-                    .binary_detection(BinaryDetection::quit(b'\x00'))
-                    .build();
-
-                let search_root = std::env::current_dir()
-                    .expect("Global search error: Failed to get current dir");
-                let dedup_symlinks = file_picker_config.deduplicate_links;
-                let absolute_root = search_root
-                    .canonicalize()
-                    .unwrap_or_else(|_| search_root.clone());
-
-                WalkBuilder::new(search_root)
-                    .hidden(file_picker_config.hidden)
-                    .parents(file_picker_config.parents)
-                    .ignore(file_picker_config.ignore)
-                    .follow_links(file_picker_config.follow_symlinks)
-                    .git_ignore(file_picker_config.git_ignore)
-                    .git_global(file_picker_config.git_global)
-                    .git_exclude(file_picker_config.git_exclude)
-                    .max_depth(file_picker_config.max_depth)
-                    .filter_entry(move |entry| {
-                        filter_picker_entry(entry, &absolute_root, dedup_symlinks)
-                    })
-                    .build_parallel()
-                    .run(|| {
-                        let mut searcher = searcher.clone();
-                        let matcher = matcher.clone();
-                        let all_matches_sx = all_matches_sx.clone();
-                        Box::new(move |entry: Result<DirEntry, ignore::Error>| -> WalkState {
-                            let entry = match entry {
-                                Ok(entry) => entry,
-                                Err(_) => return WalkState::Continue,
-                            };
-
-                            match entry.file_type() {
-                                Some(entry) if entry.is_file() => {}
-                                // skip everything else
-                                _ => return WalkState::Continue,
-                            };
-
-                            let result = searcher.search_path(
-                                &matcher,
-                                entry.path(),
-                                sinks::UTF8(|line_num, _| {
-                                    all_matches_sx
-                                        .send(FileResult::new(entry.path(), line_num as usize - 1))
-                                        .unwrap();
-
-                                    Ok(true)
-                                }),
-                            );
-
-                            if let Err(err) = result {
-                                log::error!(
-                                    "Global search error: {}, {}",
-                                    entry.path().display(),
-                                    err
-                                );
-                            }
-                            WalkState::Continue
-                        })
-                    });
-            } else {
-                // Otherwise do nothing
-                // log::warn!("Global Search Invalid Pattern")
-            }
-        },
-    );
-
-    let current_path = current!(cx.editor, cx.view).1.path().cloned();
-
-    let show_picker = async move {
-        let all_matches: Vec<FileResult> =
-            UnboundedReceiverStream::new(all_matches_rx).collect().await;
-        let call: job::Callback = Callback::EditorCompositor(Box::new(
-            move |editor: &mut Editor, compositor: &mut Compositor| {
-                if all_matches.is_empty() {
-                    editor.set_status("No matches found");
-                    return;
-                }
-
-                let picker = FilePicker::new(
-                    all_matches,
-                    current_path,
-                    move |cx, FileResult { path, line_num }, action| {
-                        match cx.editor.open(path, action) {
-                            Ok(_) => {}
-                            Err(e) => {
-                                cx.editor.set_error(format!(
-                                    "Failed to open file '{}': {}",
-                                    path.display(),
-                                    e
-                                ));
-                                return;
-                            }
-                        }
-
-                        let line_num = *line_num;
-                        let (view, doc) = current!(cx.editor, cx.view);
-                        let text = doc.text();
-                        if line_num >= text.len_lines() {
-                            cx.editor.set_error("The line you jumped to does not exist anymore because the file has changed.");
-                            return;
-                        }
-                        let start = text.line_to_char(line_num);
-                        let end = text.line_to_char((line_num + 1).min(text.len_lines()));
-
-                        doc.set_selection(view.id, Selection::single(start, end));
-                        align_view(doc, view, Align::Center);
-                    },
-                    |_editor, FileResult { path, line_num }| {
-                        Some((path.clone().into(), Some((*line_num, *line_num))))
-                    },
-                );
-                compositor.push(Box::new(overlayed(picker)));
-            },
-        ));
-        Ok(call)
-    };
-    cx.jobs.callback(show_picker);
-}
-
 enum Extend {
     Above,
     Below,
@@ -2406,181 +2197,6 @@ fn append_mode(cx: &mut Context) {
     doc.set_selection(view.id, selection);
 }
 
-fn file_picker(cx: &mut Context) {
-    let root = find_workspace().0;
-    let picker = ui::file_picker(root, &cx.editor.config());
-    cx.push_layer(Box::new(overlayed(picker)));
-}
-
-fn file_picker_in_current_buffer_directory(cx: &mut Context) {
-    let doc_dir = doc!(cx.editor, cx.view)
-        .path()
-        .and_then(|path| path.parent().map(|path| path.to_path_buf()));
-
-    let path = match doc_dir {
-        Some(path) => path,
-        None => {
-            cx.editor.set_error("current buffer has no path or parent");
-            return;
-        }
-    };
-
-    let picker = ui::file_picker(path, &cx.editor.config());
-    cx.push_layer(Box::new(overlayed(picker)));
-}
-fn file_picker_in_current_directory(cx: &mut Context) {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("./"));
-    let picker = ui::file_picker(cwd, &cx.editor.config());
-    cx.push_layer(Box::new(overlayed(picker)));
-}
-
-fn buffer_picker(cx: &mut Context) {
-    let current = view!(cx.editor, cx.view).doc;
-
-    struct BufferMeta {
-        id: DocumentId,
-        path: Option<PathBuf>,
-        is_modified: bool,
-        is_current: bool,
-    }
-
-    impl ui::menu::Item for BufferMeta {
-        type Data = ();
-
-        fn format(&self, _data: &Self::Data) -> Row {
-            let path = self
-                .path
-                .as_deref()
-                .map(helix_core::path::get_relative_path);
-            let path = match path.as_deref().and_then(Path::to_str) {
-                Some(path) => path,
-                None => SCRATCH_BUFFER_NAME,
-            };
-
-            let mut flags = String::new();
-            if self.is_modified {
-                flags.push('+');
-            }
-            if self.is_current {
-                flags.push('*');
-            }
-
-            Row::new([self.id.to_string(), flags, path.to_string()])
-        }
-    }
-
-    let new_meta = |doc: &Document| BufferMeta {
-        id: doc.id(),
-        path: doc.path().cloned(),
-        is_modified: doc.is_modified(),
-        is_current: doc.id() == current,
-    };
-
-    let picker = FilePicker::new(
-        cx.editor
-            .documents
-            .values()
-            .map(|doc| new_meta(doc))
-            .collect(),
-        (),
-        |cx, meta, action| {
-            cx.editor.switch(meta.id, action);
-        },
-        |editor, meta| {
-            let doc = &editor.documents.get(&meta.id)?;
-            let &view_id = doc.selections().keys().next()?;
-            let line = doc
-                .selection(view_id)
-                .primary()
-                .cursor_line(doc.text().slice(..));
-            Some((meta.id.into(), Some((line, line))))
-        },
-    );
-    cx.push_layer(Box::new(overlayed(picker)));
-}
-
-fn jumplist_picker(cx: &mut Context) {
-    struct JumpMeta {
-        id: DocumentId,
-        path: Option<PathBuf>,
-        selection: Selection,
-        text: String,
-        is_current: bool,
-    }
-
-    impl ui::menu::Item for JumpMeta {
-        type Data = ();
-
-        fn format(&self, _data: &Self::Data) -> Row {
-            let path = self
-                .path
-                .as_deref()
-                .map(helix_core::path::get_relative_path);
-            let path = match path.as_deref().and_then(Path::to_str) {
-                Some(path) => path,
-                None => SCRATCH_BUFFER_NAME,
-            };
-
-            let mut flags = Vec::new();
-            if self.is_current {
-                flags.push("*");
-            }
-
-            let flag = if flags.is_empty() {
-                "".into()
-            } else {
-                format!(" ({})", flags.join(""))
-            };
-            format!("{} {}{} {}", self.id, path, flag, self.text).into()
-        }
-    }
-
-    let new_meta = |view: &View, doc_id: DocumentId, selection: Selection| {
-        let doc = &cx.editor.documents.get(&doc_id);
-        let text = doc.map_or("".into(), |d| {
-            selection
-                .fragments(d.text().slice(..))
-                .map(Cow::into_owned)
-                .collect::<Vec<_>>()
-                .join(" ")
-        });
-
-        JumpMeta {
-            id: doc_id,
-            path: doc.and_then(|d| d.path().cloned()),
-            selection,
-            text,
-            is_current: view.doc == doc_id,
-        }
-    };
-
-    let picker = FilePicker::new(
-        cx.editor
-            .tree
-            .views()
-            .flat_map(|(view, _)| {
-                view.jumps
-                    .iter()
-                    .map(|(doc_id, selection)| new_meta(view, *doc_id, selection.clone()))
-            })
-            .collect(),
-        (),
-        |cx, meta, action| {
-            cx.editor.switch(meta.id, action);
-            let config = cx.editor.config();
-            let (view, doc) = current!(cx.editor, cx.view);
-            doc.set_selection(view.id, meta.selection.clone());
-            view.ensure_cursor_in_view_center(doc, config.scrolloff);
-        },
-        |editor, meta| {
-            let doc = &editor.documents.get(&meta.id)?;
-            let line = meta.selection.primary().cursor_line(doc.text().slice(..));
-            Some((meta.path.clone()?.into(), Some((line, line))))
-        },
-    );
-    cx.push_layer(Box::new(overlayed(picker)));
-}
-
 impl ui::menu::Item for MappableCommand {
     type Data = ReverseKeymap;
 
@@ -2608,64 +2224,6 @@ impl ui::menu::Item for MappableCommand {
             },
         }
     }
-}
-
-pub fn command_palette(cx: &mut Context) {
-    cx.callback = Some(Box::new(
-        move |compositor: &mut Compositor, cx: &mut compositor::Context| {
-            let keymap = compositor.find::<ui::EditorView>().unwrap().keymaps.map()
-                [&cx.editor.mode]
-                .reverse_map();
-
-            let mut commands: Vec<MappableCommand> = MappableCommand::STATIC_COMMAND_LIST.into();
-            commands.extend(typed::TYPABLE_COMMAND_LIST.iter().map(|cmd| {
-                MappableCommand::Typable {
-                    name: cmd.name.to_owned(),
-                    doc: cmd.doc.to_owned(),
-                    args: Vec::new(),
-                }
-            }));
-
-            let picker = Picker::new(commands, keymap, move |cx, command, _action| {
-                let mut ctx = Context {
-                    register: None,
-                    count: std::num::NonZeroUsize::new(1),
-                    editor: cx.editor,
-                    callback: None,
-                    on_next_key_callback: None,
-                    jobs: cx.jobs,
-                };
-                let focus = view!(ctx.editor).id;
-
-                command.execute(&mut ctx);
-
-                if ctx.editor.tree.contains(focus) {
-                    let config = ctx.editor.config();
-                    let mode = ctx.editor.mode();
-                    let view = view_mut!(ctx.editor, focus);
-                    let doc = doc_mut!(ctx.editor, &view.doc);
-
-                    view.ensure_cursor_in_view(doc, config.scrolloff);
-
-                    if mode != Mode::Insert {
-                        doc.append_changes_to_history(view);
-                    }
-                }
-            });
-            compositor.push(Box::new(overlayed(picker)));
-        },
-    ));
-}
-
-fn last_picker(cx: &mut Context) {
-    // TODO: last picker does not seem to work well with buffer_picker
-    cx.callback = Some(Box::new(|compositor, cx| {
-        if let Some(picker) = compositor.last_picker.take() {
-            compositor.push(picker);
-        } else {
-            cx.editor.set_error("no last picker")
-        }
-    }));
 }
 
 // I inserts at the first nonwhitespace character of each line with a selection
@@ -4103,44 +3661,12 @@ fn join_selections_impl(cx: &mut Context, select_space: bool) {
     doc.apply(&transaction, view.id);
 }
 
-fn keep_or_remove_selections_impl(cx: &mut Context, remove: bool) {
-    // keep or remove selections matching regex
-    let reg = cx.register.unwrap_or('/');
-    ui::regex_prompt(
-        cx,
-        if remove { "remove:" } else { "keep:" }.into(),
-        Some(reg),
-        ui::completers::none,
-        move |editor, regex, event| {
-            let (view, doc) = current!(editor);
-            if !matches!(event, PromptEvent::Update | PromptEvent::Validate) {
-                return;
-            }
-            let text = doc.text().slice(..);
-
-            if let Some(selection) =
-                selection::keep_or_remove_matches(text, doc.selection(view.id), &regex, remove)
-            {
-                doc.set_selection(view.id, selection);
-            }
-        },
-    )
-}
-
 fn join_selections(cx: &mut Context) {
     join_selections_impl(cx, false)
 }
 
 fn join_selections_space(cx: &mut Context) {
     join_selections_impl(cx, true)
-}
-
-fn keep_selections(cx: &mut Context) {
-    keep_or_remove_selections_impl(cx, false)
-}
-
-fn remove_selections(cx: &mut Context) {
-    keep_or_remove_selections_impl(cx, true)
 }
 
 fn keep_primary_selection(cx: &mut Context) {
@@ -4870,239 +4396,6 @@ enum ShellBehavior {
     Ignore,
     Insert,
     Append,
-}
-
-fn shell_pipe(cx: &mut Context) {
-    shell_prompt(cx, "pipe:".into(), ShellBehavior::Replace);
-}
-
-fn shell_pipe_to(cx: &mut Context) {
-    shell_prompt(cx, "pipe-to:".into(), ShellBehavior::Ignore);
-}
-
-fn shell_insert_output(cx: &mut Context) {
-    shell_prompt(cx, "insert-output:".into(), ShellBehavior::Insert);
-}
-
-fn shell_append_output(cx: &mut Context) {
-    shell_prompt(cx, "append-output:".into(), ShellBehavior::Append);
-}
-
-fn shell_keep_pipe(cx: &mut Context) {
-    ui::prompt(
-        cx,
-        "keep-pipe:".into(),
-        Some('|'),
-        ui::completers::none,
-        move |cx, input: &str, event: PromptEvent| {
-            let shell = &cx.editor.config().shell;
-            if event != PromptEvent::Validate {
-                return;
-            }
-            if input.is_empty() {
-                return;
-            }
-            let (view, doc) = current!(cx.editor, cx.view);
-            let selection = doc.selection(view.id);
-
-            let mut ranges = SmallVec::with_capacity(selection.len());
-            let old_index = selection.primary_index();
-            let mut index: Option<usize> = None;
-            let text = doc.text().slice(..);
-
-            for (i, range) in selection.ranges().iter().enumerate() {
-                let fragment = range.slice(text);
-                let (_output, success) = match shell_impl(shell, input, Some(fragment.into())) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        cx.editor.set_error(err.to_string());
-                        return;
-                    }
-                };
-
-                // if the process exits successfully, keep the selection
-                if success {
-                    ranges.push(*range);
-                    if i >= old_index && index.is_none() {
-                        index = Some(ranges.len() - 1);
-                    }
-                }
-            }
-
-            if ranges.is_empty() {
-                cx.editor.set_error("No selections remaining");
-                return;
-            }
-
-            let index = index.unwrap_or_else(|| ranges.len() - 1);
-            doc.set_selection(view.id, Selection::new(ranges, index));
-        },
-    );
-}
-
-fn shell_impl(shell: &[String], cmd: &str, input: Option<Rope>) -> anyhow::Result<(Tendril, bool)> {
-    tokio::task::block_in_place(|| helix_lsp::block_on(shell_impl_async(shell, cmd, input)))
-}
-
-async fn shell_impl_async(
-    shell: &[String],
-    cmd: &str,
-    input: Option<Rope>,
-) -> anyhow::Result<(Tendril, bool)> {
-    use std::process::Stdio;
-    use tokio::process::Command;
-    ensure!(!shell.is_empty(), "No shell set");
-
-    let mut process = Command::new(&shell[0]);
-    process
-        .args(&shell[1..])
-        .arg(cmd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    if input.is_some() || cfg!(windows) {
-        process.stdin(Stdio::piped());
-    } else {
-        process.stdin(Stdio::null());
-    }
-
-    let mut process = match process.spawn() {
-        Ok(process) => process,
-        Err(e) => {
-            log::error!("Failed to start shell: {}", e);
-            return Err(e.into());
-        }
-    };
-    let output = if let Some(mut stdin) = process.stdin.take() {
-        let input_task = tokio::spawn(async move {
-            if let Some(input) = input {
-                helix_view::document::to_writer(&mut stdin, encoding::UTF_8, &input).await?;
-            }
-            Ok::<_, anyhow::Error>(())
-        });
-        let (output, _) = tokio::join! {
-            process.wait_with_output(),
-            input_task,
-        };
-        output?
-    } else {
-        // Process has no stdin, so we just take the output
-        process.wait_with_output().await?
-    };
-
-    if !output.status.success() {
-        if !output.stderr.is_empty() {
-            let err = String::from_utf8_lossy(&output.stderr).to_string();
-            log::error!("Shell error: {}", err);
-            bail!("Shell error: {}", err);
-        }
-        match output.status.code() {
-            Some(exit_code) => bail!("Shell command failed: status {}", exit_code),
-            None => bail!("Shell command failed"),
-        }
-    } else if !output.stderr.is_empty() {
-        log::debug!(
-            "Command printed to stderr: {}",
-            String::from_utf8_lossy(&output.stderr).to_string()
-        );
-    }
-
-    let str = std::str::from_utf8(&output.stdout)
-        .map_err(|_| anyhow!("Process did not output valid UTF-8"))?;
-    let tendril = Tendril::from(str);
-    Ok((tendril, output.status.success()))
-}
-
-fn shell(cx: &mut compositor::Context, cmd: &str, behavior: &ShellBehavior) {
-    let pipe = match behavior {
-        ShellBehavior::Replace | ShellBehavior::Ignore => true,
-        ShellBehavior::Insert | ShellBehavior::Append => false,
-    };
-
-    let config = cx.editor.config();
-    let shell = &config.shell;
-    let (view, doc) = current!(cx.editor, cx.view);
-    let selection = doc.selection(view.id);
-
-    let mut changes = Vec::with_capacity(selection.len());
-    let mut ranges = SmallVec::with_capacity(selection.len());
-    let text = doc.text().slice(..);
-
-    let mut shell_output: Option<Tendril> = None;
-    let mut offset = 0isize;
-    for range in selection.ranges() {
-        let (output, success) = if let Some(output) = shell_output.as_ref() {
-            (output.clone(), true)
-        } else {
-            let fragment = range.slice(text);
-            match shell_impl(shell, cmd, pipe.then(|| fragment.into())) {
-                Ok(result) => {
-                    if !pipe {
-                        shell_output = Some(result.0.clone());
-                    }
-                    result
-                }
-                Err(err) => {
-                    cx.editor.set_error(err.to_string());
-                    return;
-                }
-            }
-        };
-
-        if !success {
-            cx.editor.set_error("Command failed");
-            return;
-        }
-
-        let output_len = output.chars().count();
-
-        let (from, to, deleted_len) = match behavior {
-            ShellBehavior::Replace => (range.from(), range.to(), range.len()),
-            ShellBehavior::Insert => (range.from(), range.from(), 0),
-            ShellBehavior::Append => (range.to(), range.to(), 0),
-            _ => (range.from(), range.from(), 0),
-        };
-
-        // These `usize`s cannot underflow because selection ranges cannot overlap.
-        // Once the MSRV is 1.66.0 (mixed_integer_ops is stabilized), we can use checked
-        // arithmetic to assert this.
-        let anchor = (to as isize + offset - deleted_len as isize) as usize;
-        let new_range = Range::new(anchor, anchor + output_len).with_direction(range.direction());
-        ranges.push(new_range);
-        offset = offset + output_len as isize - deleted_len as isize;
-
-        changes.push((from, to, Some(output)));
-    }
-
-    if behavior != &ShellBehavior::Ignore {
-        let transaction = Transaction::change(doc.text(), changes.into_iter())
-            .with_selection(Selection::new(ranges, selection.primary_index()));
-        doc.apply(&transaction, view.id);
-        doc.append_changes_to_history(view);
-    }
-
-    // after replace cursor may be out of bounds, do this to
-    // make sure cursor is in view and update scroll as well
-    view.ensure_cursor_in_view(doc, config.scrolloff);
-}
-
-fn shell_prompt(cx: &mut Context, prompt: Cow<'static, str>, behavior: ShellBehavior) {
-    ui::prompt(
-        cx,
-        prompt,
-        Some('|'),
-        ui::completers::none,
-        move |cx, input: &str, event: PromptEvent| {
-            if event != PromptEvent::Validate {
-                return;
-            }
-            if input.is_empty() {
-                return;
-            }
-
-            shell(cx, input, &behavior);
-        },
-    );
 }
 
 fn suspend(_cx: &mut Context) {
