@@ -765,10 +765,10 @@ impl Default for SearchConfig {
     }
 }
 
-pub struct Motion(pub Box<dyn Fn(&mut Editor)>);
+pub struct Motion(pub Box<dyn Fn(&mut Editor, ViewId)>);
 impl Motion {
-    pub fn run(&self, e: &mut Editor) {
-        (self.0)(e)
+    pub fn run(&self, e: &mut Editor, view: ViewId) {
+        (self.0)(e, view)
     }
 }
 impl std::fmt::Debug for Motion {
