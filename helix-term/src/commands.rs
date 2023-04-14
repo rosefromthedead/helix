@@ -320,8 +320,6 @@ impl MappableCommand {
         goto_file_start, "Goto line number <n> else file start",
         goto_file_end, "Goto file end",
         goto_file, "Goto files in selection",
-        goto_file_hsplit, "Goto files in selection (hsplit)",
-        goto_file_vsplit, "Goto files in selection (vsplit)",
         goto_reference, "Goto references",
         goto_window_top, "Goto window top",
         goto_window_center, "Goto window center",
@@ -401,23 +399,6 @@ impl MappableCommand {
         jump_forward, "Jump forward on jumplist",
         jump_backward, "Jump backward on jumplist",
         save_selection, "Save current selection to jumplist",
-        jump_view_right, "Jump to right split",
-        jump_view_left, "Jump to left split",
-        jump_view_up, "Jump to split above",
-        jump_view_down, "Jump to split below",
-        swap_view_right, "Swap with right split",
-        swap_view_left, "Swap with left split",
-        swap_view_up, "Swap with split above",
-        swap_view_down, "Swap with split below",
-        transpose_view, "Transpose splits",
-        rotate_view, "Goto next window",
-        rotate_view_reverse, "Goto previous window",
-        hsplit, "Horizontal bottom split",
-        hsplit_new, "Horizontal bottom split scratch buffer",
-        vsplit, "Vertical right split",
-        vsplit_new, "Vertical right split scratch buffer",
-        wclose, "Close window",
-        wonly, "Close windows except current",
         select_register, "Select register",
         insert_register, "Insert register",
         align_view_middle, "Align view middle",
@@ -1108,14 +1089,6 @@ fn goto_file_end(cx: &mut Context) {
 
 fn goto_file(cx: &mut Context) {
     goto_file_impl(cx, Action::Replace);
-}
-
-fn goto_file_hsplit(cx: &mut Context) {
-    goto_file_impl(cx, Action::HorizontalSplit);
-}
-
-fn goto_file_vsplit(cx: &mut Context) {
-    goto_file_impl(cx, Action::VerticalSplit);
 }
 
 /// Goto files in selection.
@@ -4499,109 +4472,6 @@ fn save_selection(cx: &mut Context) {
     let (view, doc) = current!(cx.editor);
     push_jump(view, doc);
     cx.editor.set_status("Selection saved to jumplist");
-}
-
-fn rotate_view(cx: &mut Context) {
-    cx.editor.focus_next()
-}
-
-fn rotate_view_reverse(cx: &mut Context) {
-    cx.editor.focus_prev()
-}
-
-fn jump_view_right(cx: &mut Context) {
-    cx.editor.focus_direction(tree::Direction::Right)
-}
-
-fn jump_view_left(cx: &mut Context) {
-    cx.editor.focus_direction(tree::Direction::Left)
-}
-
-fn jump_view_up(cx: &mut Context) {
-    cx.editor.focus_direction(tree::Direction::Up)
-}
-
-fn jump_view_down(cx: &mut Context) {
-    cx.editor.focus_direction(tree::Direction::Down)
-}
-
-fn swap_view_right(cx: &mut Context) {
-    cx.editor.swap_split_in_direction(tree::Direction::Right)
-}
-
-fn swap_view_left(cx: &mut Context) {
-    cx.editor.swap_split_in_direction(tree::Direction::Left)
-}
-
-fn swap_view_up(cx: &mut Context) {
-    cx.editor.swap_split_in_direction(tree::Direction::Up)
-}
-
-fn swap_view_down(cx: &mut Context) {
-    cx.editor.swap_split_in_direction(tree::Direction::Down)
-}
-
-fn transpose_view(cx: &mut Context) {
-    cx.editor.transpose_view()
-}
-
-// split helper, clear it later
-fn split(cx: &mut Context, action: Action) {
-    let (view, doc) = current!(cx.editor);
-    let id = doc.id();
-    let selection = doc.selection(view.id).clone();
-    let offset = view.offset;
-
-    cx.editor.switch(id, action);
-
-    // match the selection in the previous view
-    let (view, doc) = current!(cx.editor);
-    doc.set_selection(view.id, selection);
-    // match the view scroll offset (switch doesn't handle this fully
-    // since the selection is only matched after the split)
-    view.offset = offset;
-}
-
-fn hsplit(cx: &mut Context) {
-    split(cx, Action::HorizontalSplit);
-}
-
-fn hsplit_new(cx: &mut Context) {
-    cx.editor.new_file(Action::HorizontalSplit);
-}
-
-fn vsplit(cx: &mut Context) {
-    split(cx, Action::VerticalSplit);
-}
-
-fn vsplit_new(cx: &mut Context) {
-    cx.editor.new_file(Action::VerticalSplit);
-}
-
-fn wclose(cx: &mut Context) {
-    if cx.editor.tree.views().count() == 1 {
-        if let Err(err) = typed::buffers_remaining_impl(cx.editor) {
-            cx.editor.set_error(err.to_string());
-            return;
-        }
-    }
-    let view_id = view!(cx.editor).id;
-    // close current split
-    cx.editor.close(view_id);
-}
-
-fn wonly(cx: &mut Context) {
-    let views = cx
-        .editor
-        .tree
-        .views()
-        .map(|(v, focus)| (v.id, focus))
-        .collect::<Vec<_>>();
-    for (view_id, focus) in views {
-        if !focus {
-            cx.editor.close(view_id);
-        }
-    }
 }
 
 fn select_register(cx: &mut Context) {
