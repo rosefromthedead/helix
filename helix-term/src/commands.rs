@@ -1,12 +1,5 @@
-pub(crate) mod dap;
-pub(crate) mod lsp;
-pub(crate) mod typed;
-
-pub use dap::*;
 use helix_vcs::Hunk;
-pub use lsp::*;
 use tui::widgets::Row;
-pub use typed::*;
 
 use helix_core::{
     char_idx_at_visual_offset, comment,
@@ -14,20 +7,19 @@ use helix_core::{
     find_first_non_whitespace_char, graphemes,
     history::UndoKind,
     increment, indent,
-    indent::IndentStyle,
     line_ending::{get_line_ending_of_str, line_end_char_index, str_is_line_ending},
     match_brackets,
     movement::{self, move_vertically_visual, Direction},
-    object, pos_at_coords,
+    object,
     regex::{self, Regex, RegexBuilder},
     search::{self, CharMatcher},
-    selection, shellwords, surround,
+    selection, surround,
     text_annotations::TextAnnotations,
     textobject,
     tree_sitter::Node,
     unicode::width::UnicodeWidthChar,
-    visual_offset_from_block, LineEnding, Position, Range, Rope, RopeGraphemes, RopeSlice,
-    Selection, SmallVec, Tendril, Transaction,
+    visual_offset_from_block, Position, Range, Rope, RopeGraphemes, RopeSlice, Selection, SmallVec,
+    Tendril, Transaction,
 };
 use helix_view::{
     clipboard::ClipboardType,
@@ -40,27 +32,22 @@ use helix_view::{
     Document, DocumentId, Editor, ViewId,
 };
 
-use anyhow::{anyhow, bail, ensure, Context as _};
-use fuzzy_matcher::FuzzyMatcher;
+use anyhow::{anyhow, bail, Context as _};
 use insert::*;
 use movement::Movement;
 
 use crate::{
-    args,
     compositor::{self, Component, Compositor},
     job::Callback,
     keymap::ReverseKeymap,
-    ui::{self, overlay::overlayed, Popup, Prompt, PromptEvent},
+    ui::{self, PromptEvent},
 };
 
 use crate::job::{self, Jobs};
-use std::{collections::HashMap, fmt, future::Future};
 use std::{collections::HashSet, num::NonZeroUsize};
+use std::{fmt, future::Future};
 
-use std::{
-    borrow::Cow,
-    path::{Path, PathBuf},
-};
+use std::{borrow::Cow, path::PathBuf};
 
 use once_cell::sync::Lazy;
 use serde::de::{self, Deserialize, Deserializer};
@@ -279,13 +266,6 @@ impl MappableCommand {
         ensure_selections_forward, "Ensure all selections face forward",
         insert_mode, "Insert before selection",
         append_mode, "Append after selection",
-        command_mode, "Enter command mode",
-        code_action, "Perform code action",
-        symbol_picker, "Open symbol picker",
-        select_references_to_symbol_under_cursor, "Select symbol references",
-        workspace_symbol_picker, "Open workspace symbol picker",
-        diagnostics_picker, "Open diagnostic picker",
-        workspace_diagnostics_picker, "Open workspace diagnostic picker",
         insert_at_line_start, "Insert at start of line",
         insert_at_line_end, "Insert at end of line",
         open_below, "Open new line below selection",
@@ -293,16 +273,11 @@ impl MappableCommand {
         normal_mode, "Enter normal mode",
         select_mode, "Enter selection extend mode",
         exit_select_mode, "Exit selection mode",
-        goto_definition, "Goto definition",
-        goto_declaration, "Goto declaration",
         add_newline_above, "Add newline above",
         add_newline_below, "Add newline below",
-        goto_type_definition, "Goto type definition",
-        goto_implementation, "Goto implementation",
         goto_file_start, "Goto line number <n> else file start",
         goto_file_end, "Goto file end",
         goto_file, "Goto files in selection",
-        goto_reference, "Goto references",
         goto_window_top, "Goto window top",
         goto_window_center, "Goto window center",
         goto_window_bottom, "Goto window bottom",
@@ -329,7 +304,6 @@ impl MappableCommand {
         extend_to_line_start, "Extend to line start",
         extend_to_line_end, "Extend to line end",
         extend_to_line_end_newline, "Extend to line end",
-        signature_help, "Show signature help",
         insert_tab, "Insert tab char",
         insert_newline, "Insert newline char",
         delete_char_backward, "Delete previous char",
@@ -365,7 +339,6 @@ impl MappableCommand {
         align_selections, "Align selections in column",
         keep_primary_selection, "Keep primary selection",
         remove_primary_selection, "Remove primary selection",
-        hover, "Show docs for item under cursor",
         toggle_comments, "Comment/uncomment selections",
         rotate_selections_forward, "Rotate selections forward",
         rotate_selections_backward, "Rotate selections backward",
@@ -404,24 +377,7 @@ impl MappableCommand {
         goto_prev_test, "Goto previous test",
         goto_next_paragraph, "Goto next paragraph",
         goto_prev_paragraph, "Goto previous paragraph",
-        dap_launch, "Launch debug target",
-        dap_restart, "Restart debugging session",
-        dap_toggle_breakpoint, "Toggle breakpoint",
-        dap_continue, "Continue program execution",
-        dap_pause, "Pause program execution",
-        dap_step_in, "Step in",
-        dap_step_out, "Step out",
-        dap_next, "Step to next",
-        dap_variables, "List variables",
-        dap_terminate, "End debug session",
-        dap_edit_condition, "Edit breakpoint condition on current line",
-        dap_edit_log, "Edit breakpoint log message on current line",
-        dap_switch_thread, "Switch current thread",
-        dap_switch_stack_frame, "Switch stack frame",
-        dap_enable_exceptions, "Enable exception breakpoints",
-        dap_disable_exceptions, "Disable exception breakpoints",
         suspend, "Suspend and return to shell",
-        rename_symbol, "Rename symbol",
         increment, "Increment item under cursor",
         decrement, "Decrement item under cursor",
         record_macro, "Record macro",
@@ -766,8 +722,6 @@ fn kill_to_line_start(cx: &mut Context) {
         Range::new(head, anchor)
     });
     delete_selection_insert_mode(doc, view, &selection);
-
-    lsp::signature_help_impl(cx, SignatureHelpInvoked::Automatic);
 }
 
 fn kill_to_line_end(cx: &mut Context) {
@@ -787,8 +741,6 @@ fn kill_to_line_end(cx: &mut Context) {
         new_range
     });
     delete_selection_insert_mode(doc, view, &selection);
-
-    lsp::signature_help_impl(cx, SignatureHelpInvoked::Automatic);
 }
 
 fn goto_first_nonwhitespace(cx: &mut Context) {
@@ -2672,43 +2624,6 @@ pub mod insert {
         }
     }
 
-    fn signature_help(cx: &mut Context, ch: char) {
-        use helix_lsp::lsp;
-        // if ch matches signature_help char, trigger
-        let doc = current!(cx.editor, cx.view).1;
-        // The language_server!() macro is not used here since it will
-        // print an "LSP not active for current buffer" message on
-        // every keypress.
-        let language_server = match doc.language_server() {
-            Some(language_server) => language_server,
-            None => return,
-        };
-
-        let capabilities = language_server.capabilities();
-
-        if let lsp::ServerCapabilities {
-            signature_help_provider:
-                Some(lsp::SignatureHelpOptions {
-                    trigger_characters: Some(triggers),
-                    // TODO: retrigger_characters
-                    ..
-                }),
-            ..
-        } = capabilities
-        {
-            // TODO: what if trigger is multiple chars long
-            let is_trigger = triggers.iter().any(|trigger| trigger.contains(ch));
-            // lsp doesn't tell us when to close the signature help, so we request
-            // the help information again after common close triggers which should
-            // return None, which in turn closes the popup.
-            let close_triggers = &[')', ';', '.'];
-
-            if is_trigger || close_triggers.contains(&ch) {
-                super::signature_help_impl(cx, SignatureHelpInvoked::Automatic);
-            }
-        }
-    }
-
     // The default insert hook: simply insert the character
     #[allow(clippy::unnecessary_wraps)] // need to use Option<> because of the Hook signature
     fn insert(doc: &Rope, selection: &Selection, ch: char) -> Option<Transaction> {
@@ -2943,8 +2858,6 @@ pub mod insert {
             });
         let (view, doc) = current!(cx.editor, cx.view);
         doc.apply(&transaction, view.id);
-
-        lsp::signature_help_impl(cx, SignatureHelpInvoked::Automatic);
     }
 
     pub fn delete_char_forward(cx: &mut Context) {
@@ -2961,8 +2874,6 @@ pub mod insert {
                 )
             });
         doc.apply(&transaction, view.id);
-
-        lsp::signature_help_impl(cx, SignatureHelpInvoked::Automatic);
     }
 
     pub fn delete_word_backward(cx: &mut Context) {
@@ -2976,8 +2887,6 @@ pub mod insert {
             exclude_cursor(text, next, range)
         });
         delete_selection_insert_mode(doc, view, &selection);
-
-        lsp::signature_help_impl(cx, SignatureHelpInvoked::Automatic);
     }
 
     pub fn delete_word_forward(cx: &mut Context) {
@@ -2991,8 +2900,6 @@ pub mod insert {
         });
 
         delete_selection_insert_mode(doc, view, &selection);
-
-        lsp::signature_help_impl(cx, SignatureHelpInvoked::Automatic);
     }
 }
 
