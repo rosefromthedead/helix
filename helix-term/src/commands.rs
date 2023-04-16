@@ -128,11 +128,6 @@ use helix_view::{align_view, Align};
 /// Both of these types of commands can be mapped with keybindings in the config.toml.
 #[derive(Clone)]
 pub enum MappableCommand {
-    Typable {
-        name: String,
-        args: Vec<String>,
-        doc: String,
-    },
     Static {
         name: &'static str,
         fun: fn(cx: &mut Context),
@@ -160,33 +155,18 @@ macro_rules! static_commands {
 impl MappableCommand {
     pub fn execute(&self, cx: &mut Context) {
         match &self {
-            Self::Typable { name, args, doc: _ } => {
-                let args: Vec<Cow<str>> = args.iter().map(Cow::from).collect();
-                if let Some(command) = typed::TYPABLE_COMMAND_MAP.get(name.as_str()) {
-                    let mut cx = compositor::Context {
-                        editor: cx.editor,
-                        jobs: cx.jobs,
-                        scroll: None,
-                    };
-                    if let Err(e) = (command.fun)(&mut cx, &args[..], PromptEvent::Validate) {
-                        cx.editor.set_error(format!("{}", e));
-                    }
-                }
-            }
             Self::Static { fun, .. } => (fun)(cx),
         }
     }
 
     pub fn name(&self) -> &str {
         match &self {
-            Self::Typable { name, .. } => name,
             Self::Static { name, .. } => name,
         }
     }
 
     pub fn doc(&self) -> &str {
         match &self {
-            Self::Typable { doc, .. } => doc,
             Self::Static { doc, .. } => doc,
         }
     }
@@ -391,11 +371,6 @@ impl fmt::Debug for MappableCommand {
             MappableCommand::Static { name, .. } => {
                 f.debug_tuple("MappableCommand").field(name).finish()
             }
-            MappableCommand::Typable { name, args, .. } => f
-                .debug_tuple("MappableCommand")
-                .field(name)
-                .field(args)
-                .finish(),
         }
     }
 }
@@ -410,29 +385,11 @@ impl std::str::FromStr for MappableCommand {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some(suffix) = s.strip_prefix(':') {
-            let mut typable_command = suffix.split(' ').map(|arg| arg.trim());
-            let name = typable_command
-                .next()
-                .ok_or_else(|| anyhow!("Expected typable command name"))?;
-            let args = typable_command
-                .map(|s| s.to_owned())
-                .collect::<Vec<String>>();
-            typed::TYPABLE_COMMAND_MAP
-                .get(name)
-                .map(|cmd| MappableCommand::Typable {
-                    name: cmd.name.to_owned(),
-                    doc: format!(":{} {:?}", cmd.name, args),
-                    args,
-                })
-                .ok_or_else(|| anyhow!("No TypableCommand named '{}'", s))
-        } else {
-            MappableCommand::STATIC_COMMAND_LIST
-                .iter()
-                .find(|cmd| cmd.name() == s)
-                .cloned()
-                .ok_or_else(|| anyhow!("No command named '{}'", s))
-        }
+        MappableCommand::STATIC_COMMAND_LIST
+            .iter()
+            .find(|cmd| cmd.name() == s)
+            .cloned()
+            .ok_or_else(|| anyhow!("No command named '{}'", s))
     }
 }
 
@@ -449,18 +406,6 @@ impl<'de> Deserialize<'de> for MappableCommand {
 impl PartialEq for MappableCommand {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (
-                MappableCommand::Typable {
-                    name: first_name,
-                    args: first_args,
-                    ..
-                },
-                MappableCommand::Typable {
-                    name: second_name,
-                    args: second_args,
-                    ..
-                },
-            ) => first_name == second_name && first_args == second_args,
             (
                 MappableCommand::Static {
                     name: first_name, ..
@@ -2162,10 +2107,6 @@ impl ui::menu::Item for MappableCommand {
         };
 
         match self {
-            MappableCommand::Typable { doc, name, .. } => match keymap.get(name as &String) {
-                Some(bindings) => format!("{} ({}) [:{}]", doc, fmt_binding(bindings), name).into(),
-                None => format!("{} [:{}]", doc, name).into(),
-            },
             MappableCommand::Static { doc, name, .. } => match keymap.get(*name) {
                 Some(bindings) => format!("{} ({}) [{}]", doc, fmt_binding(bindings), name).into(),
                 None => format!("{} [{}]", doc, name).into(),
