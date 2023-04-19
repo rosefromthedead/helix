@@ -2,6 +2,7 @@
 members = [
   "helix-core",
   "helix-view",
+  "helix-commands",
   "helix-term",
   "helix-tui",
   "helix-lsp",

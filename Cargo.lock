@@ -1076,6 +1076,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "helix-commands"
+version = "0.1.0"
+dependencies = [
+ "helix-core",
+ "helix-vcs",
+ "helix-view",
+]
+
+[[package]]
 name = "helix-core"
 version = "0.6.0"
 dependencies = [
