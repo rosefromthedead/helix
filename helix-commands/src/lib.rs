@@ -1,5 +1,4 @@
 use helix_vcs::Hunk;
-use tui::widgets::Row;
 
 use helix_core::{
     char_idx_at_visual_offset, comment,
@@ -2088,31 +2087,6 @@ fn append_mode(cx: &mut Context) {
         )
     });
     doc.set_selection(view.id, selection);
-}
-
-impl ui::menu::Item for MappableCommand {
-    type Data = ReverseKeymap;
-
-    fn format(&self, keymap: &Self::Data) -> Row {
-        let fmt_binding = |bindings: &Vec<Vec<KeyEvent>>| -> String {
-            bindings.iter().fold(String::new(), |mut acc, bind| {
-                if !acc.is_empty() {
-                    acc.push(' ');
-                }
-                for key in bind {
-                    acc.push_str(&key.key_sequence_format());
-                }
-                acc
-            })
-        };
-
-        match self {
-            MappableCommand::Static { doc, name, .. } => match keymap.get(*name) {
-                Some(bindings) => format!("{} ({}) [{}]", doc, fmt_binding(bindings), name).into(),
-                None => format!("{} [{}]", doc, name).into(),
-            },
-        }
-    }
 }
 
 // I inserts at the first nonwhitespace character of each line with a selection
