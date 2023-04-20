@@ -22,13 +22,15 @@ use helix_core::{
 };
 use helix_view::{
     clipboard::ClipboardType,
+    current, current_ref,
     document::Mode,
     editor::{Action, Motion},
     info::Info,
     input::KeyEvent,
     keyboard::KeyCode,
+    view,
     view::View,
-    Document, Editor, ViewId,
+    view_mut, Document, Editor, ViewId,
 };
 
 use anyhow::{anyhow, bail, Context as _};
