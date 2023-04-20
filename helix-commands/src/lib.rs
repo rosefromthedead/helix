@@ -37,8 +37,6 @@ use anyhow::{anyhow, bail, Context as _};
 use insert::*;
 use movement::Movement;
 
-use crate::keymap::ReverseKeymap;
-
 use std::fmt;
 use std::{collections::HashSet, num::NonZeroUsize};
 
