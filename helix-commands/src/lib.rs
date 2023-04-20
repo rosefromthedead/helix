@@ -1539,6 +1539,7 @@ fn search_impl(
         }
     }
 
+    let (view, doc) = current!(editor, view_id);
     let text = doc.text().slice(..);
     let selection = doc.selection(view.id);
 
