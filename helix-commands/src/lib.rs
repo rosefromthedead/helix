@@ -22,29 +22,23 @@ use helix_core::{
 };
 use helix_view::{
     clipboard::ClipboardType,
-    document::{FormatterError, Mode},
+    document::Mode,
     editor::{Action, Motion},
     info::Info,
     input::KeyEvent,
     keyboard::KeyCode,
     view::View,
-    Document, DocumentId, Editor, ViewId,
+    Document, Editor, ViewId,
 };
 
 use anyhow::{anyhow, bail, Context as _};
 use insert::*;
 use movement::Movement;
 
-use crate::{
-    compositor::{self, Component, Compositor},
-    job::Callback,
-    keymap::ReverseKeymap,
-    ui::{self, PromptEvent},
-};
+use crate::keymap::ReverseKeymap;
 
-use crate::job::{self, Jobs};
+use std::fmt;
 use std::{collections::HashSet, num::NonZeroUsize};
-use std::{fmt, future::Future};
 
 use std::{borrow::Cow, path::PathBuf};
 
@@ -61,7 +55,6 @@ pub struct Context<'a> {
 
     pub callback: Option<crate::compositor::Callback>,
     pub on_next_key_callback: Option<OnKeyCallback>,
-    pub jobs: &'a mut Jobs,
 }
 
 impl<'a> Context<'a> {
@@ -80,44 +73,11 @@ impl<'a> Context<'a> {
         self.on_next_key_callback = Some(Box::new(on_next_key_callback));
     }
 
-    #[inline]
-    pub fn callback<T, F>(
-        &mut self,
-        call: impl Future<Output = helix_lsp::Result<serde_json::Value>> + 'static + Send,
-        callback: F,
-    ) where
-        T: for<'de> serde::Deserialize<'de> + Send + 'static,
-        F: FnOnce(&mut Editor, &mut Compositor, T) + Send + 'static,
-    {
-        self.jobs.callback(make_job_callback(call, callback));
-    }
-
     /// Returns 1 if no explicit count was provided
     #[inline]
     pub fn count(&self) -> usize {
         self.count.map_or(1, |v| v.get())
     }
-}
-
-#[inline]
-fn make_job_callback<T, F>(
-    call: impl Future<Output = helix_lsp::Result<serde_json::Value>> + 'static + Send,
-    callback: F,
-) -> std::pin::Pin<Box<impl Future<Output = Result<Callback, anyhow::Error>>>>
-where
-    T: for<'de> serde::Deserialize<'de> + Send + 'static,
-    F: FnOnce(&mut Editor, &mut Compositor, T) + Send + 'static,
-{
-    Box::pin(async move {
-        let json = call.await?;
-        let response = serde_json::from_value(json)?;
-        let call: job::Callback = Callback::EditorCompositor(Box::new(
-            move |editor: &mut Editor, compositor: &mut Compositor| {
-                callback(editor, compositor, response)
-            },
-        ));
-        Ok(call)
-    })
 }
 
 use helix_view::{align_view, Align};
@@ -2107,51 +2067,6 @@ fn insert_at_line_end(cx: &mut Context) {
         Range::new(pos, pos)
     });
     doc.set_selection(view.id, selection);
-}
-
-// Creates an LspCallback that waits for formatting changes to be computed. When they're done,
-// it applies them, but only if the doc hasn't changed.
-//
-// TODO: provide some way to cancel this, probably as part of a more general job cancellation
-// scheme
-async fn make_format_callback(
-    doc_id: DocumentId,
-    doc_version: i32,
-    view_id: ViewId,
-    format: impl Future<Output = Result<Transaction, FormatterError>> + Send + 'static,
-    write: Option<(Option<PathBuf>, bool)>,
-) -> anyhow::Result<job::Callback> {
-    let format = format.await;
-
-    let call: job::Callback = Callback::Editor(Box::new(move |editor| {
-        if !editor.documents.contains_key(&doc_id) || !editor.views.contains_key(&view_id) {
-            return;
-        }
-
-        let scrolloff = editor.config().scrolloff;
-        let doc = doc_mut!(editor, &doc_id);
-        let view = view_mut!(editor, view_id);
-
-        if let Ok(format) = format {
-            if doc.version() == doc_version {
-                doc.apply(&format, view.id);
-                doc.append_changes_to_history(view);
-                doc.detect_indent_and_line_ending();
-                view.ensure_cursor_in_view(doc, scrolloff);
-            } else {
-                log::info!("discarded formatting changes because the document changed");
-            }
-        }
-
-        if let Some((path, force)) = write {
-            let id = doc.id();
-            if let Err(err) = editor.save(id, path, force) {
-                editor.set_error(format!("Error saving: {}", err));
-            }
-        }
-    }));
-
-    Ok(call)
 }
 
 #[derive(PartialEq, Eq)]
