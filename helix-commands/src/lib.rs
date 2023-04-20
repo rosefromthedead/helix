@@ -55,18 +55,10 @@ pub struct Context<'a> {
     pub view: ViewId,
     pub editor: &'a mut Editor,
 
-    pub callback: Option<crate::compositor::Callback>,
     pub on_next_key_callback: Option<OnKeyCallback>,
 }
 
 impl<'a> Context<'a> {
-    /// Push a new component onto the compositor.
-    pub fn push_layer(&mut self, component: Box<dyn Component>) {
-        self.callback = Some(Box::new(|compositor: &mut Compositor, _| {
-            compositor.push(component)
-        }));
-    }
-
     #[inline]
     pub fn on_next_key(
         &mut self,
