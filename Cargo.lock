@@ -1079,9 +1079,16 @@ dependencies = [
 name = "helix-commands"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "helix-core",
+ "helix-lsp",
  "helix-vcs",
  "helix-view",
+ "log",
+ "once_cell",
+ "serde",
+ "signal-hook",
+ "tokio",
 ]
 
 [[package]]

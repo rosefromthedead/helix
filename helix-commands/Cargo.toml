@@ -7,5 +7,13 @@ edition = "2021"
 
 [dependencies]
 helix-core = { version = "0.6", path = "../helix-core" }
+helix-lsp = { version = "0.6", path = "../helix-lsp" }
 helix-view = { version = "0.6", path = "../helix-view" }
 helix-vcs = { version = "0.6", path = "../helix-vcs" }
+
+anyhow = "1"
+log = "0.4"
+once_cell = "1.17"
+serde = { version = "1.0", features = ["derive"] }
+signal-hook = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread"] }
