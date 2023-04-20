@@ -179,12 +179,8 @@ impl MappableCommand {
         half_page_up, "Move half page up",
         half_page_down, "Move half page down",
         select_all, "Select whole document",
-        select_regex, "Select all regex matches inside selections",
-        split_selection, "Split selections on regex matches",
         split_selection_on_newline, "Split selection on newlines",
         merge_consecutive_selections, "Merge consecutive selections",
-        search, "Search for regex pattern",
-        rsearch, "Reverse search for regex pattern",
         search_next, "Select next search match",
         search_prev, "Select previous search match",
         extend_search_next, "Add next search match to selection",
@@ -320,7 +316,6 @@ impl MappableCommand {
         increment, "Increment item under cursor",
         decrement, "Decrement item under cursor",
         record_macro, "Record macro",
-        replay_macro, "Replay macro",
     );
 }
 
@@ -1474,49 +1469,6 @@ fn select_all(cx: &mut Context) {
     doc.set_selection(view.id, Selection::single(0, end))
 }
 
-fn select_regex(cx: &mut Context) {
-    let reg = cx.register.unwrap_or('/');
-    let view_id = cx.view;
-    ui::regex_prompt(
-        cx,
-        "select:".into(),
-        Some(reg),
-        ui::completers::none,
-        move |editor, regex, event| {
-            let (_view, doc) = current!(editor, view_id);
-            if !matches!(event, PromptEvent::Update | PromptEvent::Validate) {
-                return;
-            }
-            let text = doc.text().slice(..);
-            if let Some(selection) =
-                selection::select_on_matches(text, doc.selection(view_id), &regex)
-            {
-                doc.set_selection(view_id, selection);
-            }
-        },
-    );
-}
-
-fn split_selection(cx: &mut Context) {
-    let reg = cx.register.unwrap_or('/');
-    let view_id = cx.view;
-    ui::regex_prompt(
-        cx,
-        "split:".into(),
-        Some(reg),
-        ui::completers::none,
-        move |editor, regex, event| {
-            let (_view, doc) = current!(editor, view_id);
-            if !matches!(event, PromptEvent::Update | PromptEvent::Validate) {
-                return;
-            }
-            let text = doc.text().slice(..);
-            let selection = selection::split_on_matches(text, doc.selection(view_id), &regex);
-            doc.set_selection(view_id, selection);
-        },
-    );
-}
-
 fn split_selection_on_newline(cx: &mut Context) {
     let (view, doc) = current!(cx.editor, cx.view);
     let text = doc.text().slice(..);
@@ -1628,60 +1580,6 @@ fn search_completions(cx: &mut Context, reg: Option<char>) -> Vec<String> {
     items.sort_unstable();
     items.dedup();
     items.into_iter().cloned().collect()
-}
-
-fn search(cx: &mut Context) {
-    searcher(cx, Direction::Forward)
-}
-
-fn rsearch(cx: &mut Context) {
-    searcher(cx, Direction::Backward)
-}
-
-fn searcher(cx: &mut Context, direction: Direction) {
-    let reg = cx.register.unwrap_or('/');
-    let config = cx.editor.config();
-    let scrolloff = config.scrolloff;
-    let wrap_around = config.search.wrap_around;
-
-    let (_view, doc) = current!(cx.editor, cx.view);
-
-    // TODO: could probably share with select_on_matches?
-
-    // HAXX: sadly we can't avoid allocating a single string for the whole buffer since we can't
-    // feed chunks into the regex yet
-    let contents = doc.text().slice(..).to_string();
-    let completions = search_completions(cx, Some(reg));
-
-    let view_id = cx.view;
-    ui::regex_prompt(
-        cx,
-        "search:".into(),
-        Some(reg),
-        move |_editor: &Editor, input: &str| {
-            completions
-                .iter()
-                .filter(|comp| comp.starts_with(input))
-                .map(|comp| (0.., std::borrow::Cow::Owned(comp.clone())))
-                .collect()
-        },
-        move |editor, regex, event| {
-            if !matches!(event, PromptEvent::Update | PromptEvent::Validate) {
-                return;
-            }
-            search_impl(
-                editor,
-                view_id,
-                &contents,
-                &regex,
-                Movement::Move,
-                direction,
-                scrolloff,
-                wrap_around,
-                false,
-            );
-        },
-    );
 }
 
 fn search_next_or_prev_impl(cx: &mut Context, movement: Movement, direction: Direction) {
@@ -4086,46 +3984,4 @@ fn record_macro(cx: &mut Context) {
         cx.editor
             .set_status(format!("Recording to register [{}]", reg));
     }
-}
-
-fn replay_macro(cx: &mut Context) {
-    let reg = cx.register.unwrap_or('@');
-
-    if cx.editor.macro_replaying.contains(&reg) {
-        cx.editor.set_error(format!(
-            "Cannot replay from register [{}] because already replaying from same register",
-            reg
-        ));
-        return;
-    }
-
-    let keys: Vec<KeyEvent> = if let Some([keys_str]) = cx.editor.registers.read(reg) {
-        match helix_view::input::parse_macro(keys_str) {
-            Ok(keys) => keys,
-            Err(err) => {
-                cx.editor.set_error(format!("Invalid macro: {}", err));
-                return;
-            }
-        }
-    } else {
-        cx.editor.set_error(format!("Register [{}] empty", reg));
-        return;
-    };
-
-    // Once the macro has been fully validated, it's marked as being under replay
-    // to ensure we don't fall into infinite recursion.
-    cx.editor.macro_replaying.push(reg);
-
-    let count = cx.count();
-    cx.callback = Some(Box::new(move |compositor, cx| {
-        for _ in 0..count {
-            for &key in keys.iter() {
-                compositor.handle_event(&compositor::Event::Key(key), cx);
-            }
-        }
-        // The macro under replay is cleared at the end of the callback, not in the
-        // macro replay context, or it will not correctly protect the user from
-        // replaying recursively.
-        cx.editor.macro_replaying.pop();
-    }));
 }
