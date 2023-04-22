@@ -1080,6 +1080,7 @@ name = "helix-commands"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "helix-core",
  "helix-lsp",
  "helix-vcs",
@@ -1089,6 +1090,7 @@ dependencies = [
  "serde",
  "signal-hook",
  "tokio",
+ "toml",
 ]
 
 [[package]]

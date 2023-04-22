@@ -1,3 +1,5 @@
+pub mod keymap;
+
 use helix_vcs::Hunk;
 
 use helix_core::{

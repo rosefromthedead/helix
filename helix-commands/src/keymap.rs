@@ -1,7 +1,7 @@
 pub mod default;
 pub mod macros;
 
-pub use crate::commands::MappableCommand;
+pub use crate::MappableCommand;
 use arc_swap::{
     access::{DynAccess, DynGuard},
     ArcSwap,
@@ -276,9 +276,6 @@ impl Keymap {
         fn map_node(cmd_map: &mut ReverseKeymap, node: &KeyTrie, keys: &mut Vec<KeyEvent>) {
             match node {
                 KeyTrie::Leaf(cmd) => match cmd {
-                    MappableCommand::Typable { name, .. } => {
-                        cmd_map.entry(name.into()).or_default().push(keys.clone())
-                    }
                     MappableCommand::Static { name, .. } => cmd_map
                         .entry(name.to_string())
                         .or_default()
@@ -434,7 +431,7 @@ mod tests {
     fn duplicate_keys_should_panic() {
         keymap!({ "Normal mode"
             "i" => normal_mode,
-            "i" => goto_definition,
+            "i" => insert_mode,
         });
     }
 
@@ -512,8 +509,8 @@ mod tests {
                 keymap!({ "Normal mode"
                     "space" => { ""
                         "s" => { ""
-                            "v" => vsplit,
-                            "c" => hsplit,
+                            "d" => move_line_down,
+                            "u" => move_line_up,
                         },
                     },
                 })
@@ -527,9 +524,9 @@ mod tests {
         assert_eq!(
             keymap
                 .root()
-                .search(&[key!(' '), key!('s'), key!('v')])
+                .search(&[key!(' '), key!('s'), key!('d')])
                 .unwrap(),
-            &KeyTrie::Leaf(MappableCommand::vsplit),
+            &KeyTrie::Leaf(MappableCommand::move_line_down),
             "Leaf should be present in merged subnode"
         );
         // Make sure an order was set during merge
@@ -592,44 +589,5 @@ mod tests {
             ]),
             "Mismatch"
         )
-    }
-
-    #[test]
-    fn escaped_keymap() {
-        use crate::commands::MappableCommand;
-        use helix_view::input::{KeyCode, KeyEvent, KeyModifiers};
-
-        let keys = r#"
-"+" = [
-    "select_all",
-    ":pipe sed -E 's/\\s+$//g'",
-]
-        "#;
-
-        let key = KeyEvent {
-            code: KeyCode::Char('+'),
-            modifiers: KeyModifiers::NONE,
-        };
-
-        let expectation = Keymap::new(KeyTrie::Node(KeyTrieNode::new(
-            "",
-            hashmap! {
-                key => KeyTrie::Sequence(vec!{
-                    MappableCommand::select_all,
-                    MappableCommand::Typable {
-                        name: "pipe".to_string(),
-                        args: vec!{
-                            "sed".to_string(),
-                            "-E".to_string(),
-                            "'s/\\s+$//g'".to_string()
-                        },
-                        doc: "".to_string(),
-                    },
-                })
-            },
-            vec![key],
-        )));
-
-        assert_eq!(toml::from_str(keys), Ok(expectation));
     }
 }
