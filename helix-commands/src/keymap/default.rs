@@ -43,11 +43,6 @@ pub fn default() -> HashMap<Mode, Keymap> {
             "h" => goto_line_start,
             "l" => goto_line_end,
             "s" => goto_first_nonwhitespace,
-            "d" => goto_definition,
-            "D" => goto_declaration,
-            "y" => goto_type_definition,
-            "r" => goto_reference,
-            "i" => goto_implementation,
             "t" => goto_window_top,
             "c" => goto_window_center,
             "b" => goto_window_bottom,
@@ -59,7 +54,6 @@ pub fn default() -> HashMap<Mode, Keymap> {
             "j" => move_line_down,
             "." => goto_last_modification,
         },
-        ":" => command_mode,
 
         "i" => insert_mode,
         "I" => insert_at_line_start,
@@ -77,10 +71,8 @@ pub fn default() -> HashMap<Mode, Keymap> {
         "A-C" => copy_selection_on_prev_line,
 
 
-        "s" => select_regex,
         "A-s" => split_selection_on_newline,
         "A-_" => merge_consecutive_selections,
-        "S" => split_selection,
         ";" => collapse_selection,
         "A-;" => flip_selections,
         "A-o" | "A-up" => expand_selection,
@@ -128,8 +120,6 @@ pub fn default() -> HashMap<Mode, Keymap> {
             "space" => add_newline_below,
         },
 
-        "/" => search,
-        "?" => rsearch,
         "n" => search_next,
         "N" => search_prev,
         "*" => search_selection,
@@ -146,7 +136,6 @@ pub fn default() -> HashMap<Mode, Keymap> {
         "P" => paste_before,
 
         "Q" => record_macro,
-        "q" => replay_macro,
 
         ">" => indent,
         "<" => unindent,
@@ -191,7 +180,6 @@ pub fn default() -> HashMap<Mode, Keymap> {
             "p" => paste_clipboard_after,
             "P" => paste_clipboard_before,
             "R" => replace_selections_with_clipboard,
-            "h" => select_references_to_symbol_under_cursor,
         },
         "z" => { "View"
             "z" | "c" => align_view_center,
@@ -205,8 +193,6 @@ pub fn default() -> HashMap<Mode, Keymap> {
             "C-u" | "backspace" => half_page_up,
             "C-d" | "space" => half_page_down,
 
-            "/" => search,
-            "?" => rsearch,
             "n" => search_next,
             "N" => search_prev,
         },
@@ -222,8 +208,6 @@ pub fn default() -> HashMap<Mode, Keymap> {
             "C-u" | "backspace" => half_page_up,
             "C-d" | "space" => half_page_down,
 
-            "/" => search,
-            "?" => rsearch,
             "n" => search_next,
             "N" => search_prev,
         },
