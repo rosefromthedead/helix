@@ -341,6 +341,7 @@ impl Editor {
                             }
                         }
                         None => {
+                            self.debugger = None;
                             self.set_status(
                                 "Terminated debugging session and disconnected debugger.",
                             );
